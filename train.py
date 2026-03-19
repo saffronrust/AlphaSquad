@@ -40,8 +40,8 @@ class AlphaZeroTrainer:
         
         if os.path.exists(MODEL_PATH):
             print("Loading existing best model...")
-            self.nnet.load_state_dict(torch.load(MODEL_PATH))
-            self.pnet.load_state_dict(torch.load(MODEL_PATH))
+            self.nnet.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+            self.pnet.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
         
         self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
         self.mcts = NeuralMCTS(self.nnet, DEVICE)
@@ -70,31 +70,39 @@ class AlphaZeroTrainer:
         step_counts = [0] * concurrent_games
         episodes_completed = 0
         
-        # print(f"  Running {concurrent_games} games simultaneously...")
+        # Track which slots are currently running a game
+        active_slots = list(range(concurrent_games))
         
-        while episodes_completed < target_episodes:
-            # Generate temperatures for all games based on their individual turn counts
-            temps = [1.0 if s < 15 else 0.0 for s in step_counts]
+        print(f"  Starting {concurrent_games} concurrent games...")
+        
+        # Loop continues as long as there is at least one game still playing
+        while active_slots:
+            # Extract only the boards and temps for the currently active games
+            current_boards = [active_boards[i] for i in active_slots]
+            current_temps = [1.0 if step_counts[i] < 15 else 0.0 for i in active_slots]
             
-            # Fetch moves for all games at once
-            batch_pi = self.mcts.get_action_prob_batched(active_boards, simulations=200, temps=temps, add_noise=True)
+            # Fetch moves for the active games in a single batch
+            batch_pi = self.mcts.get_action_prob_batched(current_boards, simulations=200, temps=current_temps, add_noise=True)
             
-            for i in range(concurrent_games):
-                board = active_boards[i]
-                pi = batch_pi[i]
+            slots_to_retire = []
+            
+            for idx, slot in enumerate(active_slots):
+                board = active_boards[slot]
+                pi = batch_pi[idx]
                 sym = board.get_state_vector()
                 
                 # Store history
-                histories[i].append([sym, pi, board.turn])
+                histories[slot].append([sym, pi, board.turn])
                 
                 # Execute the chosen move
                 action = np.random.choice(len(pi), p=pi)
                 board.do_move(action)
-                step_counts[i] += 1
+                step_counts[slot] += 1
                 
-                # If a game finishes, record its data and start a new one in its slot
+                # If a game finishes
                 if board.winner is not None:
-                    for hist_state, hist_pi, hist_player in histories[i]:
+                    # 1. Record its data
+                    for hist_state, hist_pi, hist_player in histories[slot]:
                         reward = 1 if hist_player == board.winner else -1
                         train_examples.append((hist_state, hist_pi, reward))
                     
@@ -102,11 +110,21 @@ class AlphaZeroTrainer:
                     if episodes_completed % 10 == 0:
                         print(f"    Finished {episodes_completed}/{target_episodes} games...")
                     
-                    # Reset this slot with a fresh game
-                    active_boards[i] = SquadroBoard()
-                    histories[i] = []
-                    step_counts[i] = 0
-                    
+                    # 2. Decide whether to restart the slot or retire it.
+                    # We only start a new game if the number of completed games 
+                    # PLUS the currently active games is less than or equal to our target.
+                    if episodes_completed + len(active_slots) <= target_episodes:
+                        active_boards[slot] = SquadroBoard()
+                        histories[slot] = []
+                        step_counts[slot] = 0
+                    else:
+                        # We have enough games started to hit our target, retire this slot
+                        slots_to_retire.append(slot)
+                        
+            # Remove retired slots from the active list so they aren't processed next turn
+            for slot in slots_to_retire:
+                active_slots.remove(slot)
+                
         return train_examples
 
     def learn(self):
