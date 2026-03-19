@@ -8,6 +8,7 @@ import random
 import pickle
 from collections import deque
 from torch.utils.tensorboard import SummaryWriter
+import copy
 
 from game import SquadroBoard
 from model import SquadroNet
@@ -53,7 +54,7 @@ class AlphaZeroTrainer:
         if os.path.exists(OPTIMIZER_PATH):
             print("Loading existing optimizer state...")
             self.optimizer.load_state_dict(torch.load(OPTIMIZER_PATH, map_location=DEVICE))
-            self.best_optimizer_state = self.optimizer.state_dict()
+            self.best_optimizer_state = copy.deepcopy(self.optimizer.state_dict())
 
         self.mcts = NeuralMCTS(self.nnet, DEVICE)
         self.train_examples_history = deque(maxlen=100000) 
@@ -269,7 +270,7 @@ class AlphaZeroTrainer:
                 torch.save(self.nnet.state_dict(), MODEL_PATH)
                 torch.save(self.optimizer.state_dict(), OPTIMIZER_PATH)
                 self.pnet.load_state_dict(self.nnet.state_dict()) 
-                self.best_optimizer_state = self.optimizer.state_dict()
+                self.best_optimizer_state = copy.deepcopy(self.optimizer.state_dict())
             else:
                 print("  REJECTED. Reverting to previous best.")
                 self.nnet.load_state_dict(self.pnet.state_dict())
