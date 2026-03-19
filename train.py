@@ -236,10 +236,18 @@ class AlphaZeroTrainer:
                 print("  NEW MODEL ACCEPTED! Saving...")
                 torch.save(self.nnet.state_dict(), MODEL_PATH)
                 self.pnet.load_state_dict(self.nnet.state_dict()) 
+                # Save a copy of the valid optimizer state
+                self.best_optimizer_state = self.optimizer.state_dict()
             else:
                 print("  REJECTED. Reverting to previous best.")
                 self.nnet.load_state_dict(self.pnet.state_dict())
-                # Bug Fix 3: Removed optimizer re-initialization to preserve momentum state
+                
+                # Restore the optimizer state that matches the reverted weights
+                if hasattr(self, 'best_optimizer_state'):
+                    self.optimizer.load_state_dict(self.best_optimizer_state)
+                else:
+                    # Fallback: re-initialize if no best state is saved yet
+                    self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
 
             # --- Checkpoint Saving ---
             if i % 5 == 0:
