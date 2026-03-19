@@ -88,7 +88,6 @@ class NeuralMCTS:
 
             while node is not None:
                 node.visits += 1
-                # If this node's turn matches the leaf's turn, add the value. Else, subtract it.
                 if node.state.turn == leaf_player:
                     node.value_sum += value
                 else:
@@ -96,13 +95,16 @@ class NeuralMCTS:
                 node = node.parent
 
         # 3. Calculate Policy Vector (pi) from visits
-        # pi = visits / sum(visits)
-        counts = [0] * 5 # 5 possible moves
+        counts = [0] * 5 
         for move, child in root.children.items():
             counts[move] = child.visits
 
         if temp == 0:
-            best = np.argmax(counts)
+            # FIX: Random tie-breaker for identical visit counts to prevent deterministic looping
+            max_count = max(counts)
+            best_moves = [i for i, count in enumerate(counts) if count == max_count]
+            best = np.random.choice(best_moves)
+            
             probs = [0] * 5
             probs[best] = 1.0
             return probs
@@ -127,8 +129,6 @@ class NeuralMCTS:
                 best_child = child
         return best_child
     
-    # Wrapper for gameplay compatibility
     def search(self, root_state, simulations=400, add_noise=False):
-        # Pass add_noise=False to get_action_prob
         probs = self.get_action_prob(root_state, simulations, temp=0, add_noise=add_noise)
         return np.argmax(probs)
