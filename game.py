@@ -38,18 +38,22 @@ class SquadroBoard:
         state = np.zeros((5, 5, 5), dtype=np.float32)
         
         for r in range(5):
-            # If P1 is on the 5x5 grid (positions 1-5), mark their exact spatial location
             if 1 <= self.p1_pos[r] <= 5:
                 state[0, r, self.p1_pos[r] - 1] = 1.0
-            # P1 Directions
-            state[2, r, :] = self.p1_dir[r]
+            
+            if self.p1_fin[r] == 1:
+                state[2, r, :] = 0.0  # Unique marker for finished pieces
+            else:
+                state[2, r, :] = self.p1_dir[r]
 
         for c in range(5):
-            # If P2 is on the 5x5 grid (positions 1-5), mark their exact spatial location
             if 1 <= self.p2_pos[c] <= 5:
                 state[1, self.p2_pos[c] - 1, c] = 1.0
-            # P2 Directions
-            state[3, :, c] = self.p2_dir[c]
+                
+            if self.p2_fin[c] == 1:
+                state[3, :, c] = 0.0  # Unique marker for finished pieces
+            else:
+                state[3, :, c] = self.p2_dir[c]
 
         # Turn Plane
         turn_val = 1.0 if self.turn == 1 else -1.0

@@ -60,7 +60,7 @@ class AlphaZeroTrainer:
             temp = 1.0 if step_count < 15 else 0.0
             
             # Get Policy Vector from MCTS
-            pi = self.mcts.get_action_prob(board, simulations=50, temp=temp)
+            pi = self.mcts.get_action_prob(board, simulations=50, temp=temp, add_noise=True)
             
             # Store (State, Policy, CurrentPlayer)
             # We don't know the winner yet, so we store the current player ID to fix later
@@ -148,10 +148,10 @@ class AlphaZeroTrainer:
             while board.winner is None:
                 if (board.turn == 1 and p1_is_nnet) or (board.turn == 2 and not p1_is_nnet):
                     # New Net Moves
-                    move = nnet_mcts.search(board, simulations=40) # Fast check
+                    move = nnet_mcts.search(board, simulations=40, add_noise=False)
                 else:
                     # Old Net Moves
-                    move = pnet_mcts.search(board, simulations=40)
+                    move = pnet_mcts.search(board, simulations=40, add_noise=False)
                 board.do_move(move)
             
             # Check who won

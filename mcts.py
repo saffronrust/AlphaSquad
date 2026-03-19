@@ -28,7 +28,7 @@ class NeuralMCTS:
         self.alpha = alpha   
         self.beta = beta     
 
-    def get_action_prob(self, root_state, simulations=400, temp=1.0):
+    def get_action_prob(self, root_state, simulations=400, temp=1.0, add_noise=True):
         """
         Runs MCTS and returns the policy vector (pi).
         :param temp: Temperature (1.0 = explore, ~0 = competitive/greedy)
@@ -47,8 +47,9 @@ class NeuralMCTS:
         else: legal_probs = np.ones(len(legal_moves)) / len(legal_moves)
         
         # Add Dirichlet Noise to root (Exploration)
-        noise = np.random.dirichlet([self.alpha] * len(legal_moves))
-        legal_probs = (1 - self.beta) * legal_probs + self.beta * noise
+        if add_noise:
+            noise = np.random.dirichlet([self.alpha] * len(legal_moves))
+            legal_probs = (1 - self.beta) * legal_probs + self.beta * noise
 
         for i, move in enumerate(legal_moves):
             root.children[move] = MCTSNode(root.state.clone(), parent=root, move=move, prob=legal_probs[i])
@@ -114,19 +115,20 @@ class NeuralMCTS:
     def select_child(self, node):
         best_score = -float('inf')
         best_child = None
-        N_parent = node.visits
+        N_parent = max(1, node.visits)
         sqrt_N = math.sqrt(N_parent)
 
         for move, child in node.children.items():
             q_val = child.q_value()
             u_val = self.c_puct * child.prob * (sqrt_N / (1 + child.visits))
-            score = q_val + u_val
+            score = -q_val + u_val
             if score > best_score:
                 best_score = score
                 best_child = child
         return best_child
     
     # Wrapper for gameplay compatibility
-    def search(self, root_state, simulations=400):
-        probs = self.get_action_prob(root_state, simulations, temp=0)
+    def search(self, root_state, simulations=400, add_noise=False):
+        # Pass add_noise=False to get_action_prob
+        probs = self.get_action_prob(root_state, simulations, temp=0, add_noise=add_noise)
         return np.argmax(probs)
