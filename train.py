@@ -42,10 +42,16 @@ class AlphaZeroTrainer:
             print("Loading existing best model...")
             self.nnet.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
             self.pnet.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+        else:
+            # Bug Fix 1: Ensure pnet and nnet start with the exact same random weights
+            print("No existing model found. Initializing new synchronized models...")
+            self.pnet.load_state_dict(self.nnet.state_dict())
         
         self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
         self.mcts = NeuralMCTS(self.nnet, DEVICE)
-        self.train_examples_history = deque(maxlen=10000) 
+        
+        # Increased maxlen to prevent catastrophic forgetting (Bug 4 recommendation)
+        self.train_examples_history = deque(maxlen=100000) 
 
         # Load existing buffer if resuming a paused run
         if os.path.exists(BUFFER_PATH):
@@ -53,12 +59,6 @@ class AlphaZeroTrainer:
             with open(BUFFER_PATH, "rb") as f:
                 self.train_examples_history = pickle.load(f)
             print(f"Loaded {len(self.train_examples_history)} examples.")
-            
-        # # To load a specific checkpoint:
-        # checkpoint = torch.load("checkpoints/checkpoint_iter_10.pth")
-        # self.nnet.load_state_dict(checkpoint['model_state_dict'])
-        # self.pnet.load_state_dict(checkpoint['model_state_dict'])
-        # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     def execute_parallel_episodes(self, target_episodes=100, concurrent_games=64):
         self.nnet.eval()
@@ -74,6 +74,8 @@ class AlphaZeroTrainer:
         active_slots = list(range(concurrent_games))
         
         print(f"  Starting {concurrent_games} concurrent games...")
+        
+        MAX_MOVES = 300 # Bug Fix 2: Prevent infinite loops
         
         # Loop continues as long as there is at least one game still playing
         while active_slots:
@@ -99,11 +101,16 @@ class AlphaZeroTrainer:
                 board.do_move(action)
                 step_counts[slot] += 1
                 
-                # If a game finishes
-                if board.winner is not None:
+                is_draw = step_counts[slot] >= MAX_MOVES
+                
+                # If a game finishes or hits the move limit
+                if board.winner is not None or is_draw:
                     # 1. Record its data
                     for hist_state, hist_pi, hist_player in histories[slot]:
-                        reward = 1 if hist_player == board.winner else -1
+                        if is_draw:
+                            reward = 0.0 # Draw penalty
+                        else:
+                            reward = 1.0 if hist_player == board.winner else -1.0
                         train_examples.append((hist_state, hist_pi, reward))
                     
                     episodes_completed += 1
@@ -111,17 +118,14 @@ class AlphaZeroTrainer:
                         print(f"    Finished {episodes_completed}/{target_episodes} games...")
                     
                     # 2. Decide whether to restart the slot or retire it.
-                    # We only start a new game if the number of completed games 
-                    # PLUS the currently active games is less than or equal to our target.
                     if episodes_completed + len(active_slots) <= target_episodes:
                         active_boards[slot] = SquadroBoard()
                         histories[slot] = []
                         step_counts[slot] = 0
                     else:
-                        # We have enough games started to hit our target, retire this slot
                         slots_to_retire.append(slot)
                         
-            # Remove retired slots from the active list so they aren't processed next turn
+            # Remove retired slots from the active list
             for slot in slots_to_retire:
                 active_slots.remove(slot)
                 
@@ -169,25 +173,37 @@ class AlphaZeroTrainer:
         pnet_mcts = NeuralMCTS(self.pnet, DEVICE)
         
         wins = 0
+        draws = 0
+        MAX_MOVES = 300 # Bug Fix 2: Prevent infinite loops
         
         print(f"Evaluating: Playing {EVAL_GAMES} games...")
         for i in range(EVAL_GAMES):
             board = SquadroBoard()
             p1_is_nnet = (i % 2 == 0) 
+            moves_taken = 0
             
-            while board.winner is None:
+            while board.winner is None and moves_taken < MAX_MOVES:
                 if (board.turn == 1 and p1_is_nnet) or (board.turn == 2 and not p1_is_nnet):
                     move = nnet_mcts.search(board, simulations=200, add_noise=False)
                 else:
                     move = pnet_mcts.search(board, simulations=200, add_noise=False)
                 board.do_move(move)
+                moves_taken += 1
             
-            if p1_is_nnet:
+            if board.winner is None:
+                draws += 1
+            elif p1_is_nnet:
                 if board.winner == 1: wins += 1
             else:
                 if board.winner == 2: wins += 1
                 
-        win_rate = wins / EVAL_GAMES
+        # Calculate win rate purely on decisive games
+        decisive_games = EVAL_GAMES - draws
+        win_rate = wins / decisive_games if decisive_games > 0 else 0.0
+        
+        if draws > 0:
+            print(f"  Note: {draws} games ended in a draw (move limit reached).")
+            
         return win_rate
 
     def run_pipeline(self):
@@ -223,7 +239,7 @@ class AlphaZeroTrainer:
             else:
                 print("  REJECTED. Reverting to previous best.")
                 self.nnet.load_state_dict(self.pnet.state_dict())
-                self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
+                # Bug Fix 3: Removed optimizer re-initialization to preserve momentum state
 
             # --- Checkpoint Saving ---
             if i % 5 == 0:
