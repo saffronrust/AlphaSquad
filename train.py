@@ -14,11 +14,11 @@ from mcts import NeuralMCTS
 
 # --- HYPERPARAMETERS ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-ITERATIONS = 50           
-SELF_PLAY_EPISODES = 20   
+ITERATIONS = 10           
+SELF_PLAY_EPISODES = 50   
 EPOCHS = 10               
-BATCH_SIZE = 64           
-EVAL_GAMES = 20           
+BATCH_SIZE = 256           
+EVAL_GAMES = 40           
 WIN_THRESHOLD = 0.55      
 MODEL_PATH = "squadro_best.pth"
 
@@ -47,7 +47,7 @@ class AlphaZeroTrainer:
         while True:
             step_count += 1
             temp = 1.0 if step_count < 15 else 0.0
-            pi = self.mcts.get_action_prob(board, simulations=50, temp=temp, add_noise=True)
+            pi = self.mcts.get_action_prob(board, simulations=200, temp=temp, add_noise=True)
             
             sym = board.get_state_vector()
             train_examples.append([sym, pi, board.turn])

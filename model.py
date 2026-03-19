@@ -9,7 +9,7 @@ class ConvBlock(nn.Module):
     - Batch Norm
     - ReLU
     """
-    def __init__(self, in_channels, out_channels=256):
+    def __init__(self, in_channels, out_channels=128):
         super(ConvBlock, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn = nn.BatchNorm2d(out_channels)
@@ -20,12 +20,12 @@ class ConvBlock(nn.Module):
 class ResidualBlock(nn.Module):
     """
     A single residual block:
-    - Conv 256 (3x3) -> BN -> ReLU
-    - Conv 256 (3x3) -> BN
+    - Conv 128 (3x3) -> BN -> ReLU
+    - Conv 128 (3x3) -> BN
     - Skip Connection (Input + Output)
     - ReLU
     """
-    def __init__(self, channels=256):
+    def __init__(self, channels=128):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(channels)
@@ -40,28 +40,28 @@ class ResidualBlock(nn.Module):
         return F.relu(out)
 
 class SquadroNet(nn.Module):
-    def __init__(self, num_res_blocks=10, in_channels=5):
+    def __init__(self, num_res_blocks=5, in_channels=5):
         super(SquadroNet, self).__init__()
         
         # --- BODY ---
         # 1. Initial Convolutional Block
-        self.conv_block = ConvBlock(in_channels, 256)
+        self.conv_block = ConvBlock(in_channels, 128)
         
-        # 2. 10 Residual Blocks
+        # 2. 5 Residual Blocks
         self.res_blocks = nn.ModuleList([
-            ResidualBlock(256) for _ in range(num_res_blocks)
+            ResidualBlock(128) for _ in range(num_res_blocks)
         ])
         
         # --- POLICY HEAD ---
-        # Conv 256 filters (1x1) -> BN -> ReLU -> Linear -> Action Size (5)
-        self.policy_conv = nn.Conv2d(256, 256, kernel_size=1, stride=1)
-        self.policy_bn = nn.BatchNorm2d(256)
-        # Linear input size: 256 filters * 5x5 board = 6400
-        self.policy_fc = nn.Linear(256 * 5 * 5, 5) 
+        # Conv 128 filters (1x1) -> BN -> ReLU -> Linear -> Action Size (5)
+        self.policy_conv = nn.Conv2d(128, 128, kernel_size=1, stride=1)
+        self.policy_bn = nn.BatchNorm2d(128)
+        # Linear input size: 128 filters * 5x5 board = 3200
+        self.policy_fc = nn.Linear(128 * 5 * 5, 5) 
         
         # --- VALUE HEAD ---
         # Conv 1 filter (1x1) -> BN -> ReLU -> Linear(256) -> ReLU -> Linear(1) -> Tanh
-        self.value_conv = nn.Conv2d(256, 1, kernel_size=1, stride=1)
+        self.value_conv = nn.Conv2d(128, 1, kernel_size=1, stride=1)
         self.value_bn = nn.BatchNorm2d(1)
         # Linear input size: 1 filter * 5x5 board = 25
         self.value_fc1 = nn.Linear(1 * 5 * 5, 256)
