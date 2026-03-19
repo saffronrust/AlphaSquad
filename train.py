@@ -53,6 +53,7 @@ class AlphaZeroTrainer:
         if os.path.exists(OPTIMIZER_PATH):
             print("Loading existing optimizer state...")
             self.optimizer.load_state_dict(torch.load(OPTIMIZER_PATH, map_location=DEVICE))
+            self.best_optimizer_state = self.optimizer.state_dict()
 
         self.mcts = NeuralMCTS(self.nnet, DEVICE)
         self.train_examples_history = deque(maxlen=100000) 

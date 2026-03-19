@@ -157,8 +157,9 @@ class NeuralMCTS:
                 else: legal_probs = np.ones(len(legal_moves)) / len(legal_moves)
 
                 for j, move in enumerate(legal_moves):
-                    root.children[move] = MCTSNode(root.state.clone(), parent=root, move=move, prob=legal_probs[j])
-                    root.children[move].state.do_move(move)
+                    new_state = root.state.clone()
+                    new_state.do_move(move)
+                    root.children[move] = MCTSNode(new_state, parent=root, move=move, prob=legal_probs[j])
 
         # Apply Dirichlet Noise to encourage exploration (only done at the root)
         if add_noise:
