@@ -133,6 +133,7 @@ class AlphaZeroTrainer:
         Returns fraction of games won by New Model.
         """
         self.nnet.eval()
+        self.pnet.eval()
         nnet_mcts = NeuralMCTS(self.nnet, DEVICE)
         pnet_mcts = NeuralMCTS(self.pnet, DEVICE)
         

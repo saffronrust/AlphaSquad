@@ -27,37 +27,38 @@ class SquadroBoard:
     def get_state_vector(self):
         """
         Converts board to a (5, 5, 5) spatial tensor for the ResNet.
-        Shape: [Channels, Height, Width]
         """
-        # We create 5 planes of 5x5
-        # Plane 0: P1 Positions (Row-wise fill)
-        # Plane 1: P2 Positions (Col-wise fill)
-        # Plane 2: P1 Directions
-        # Plane 3: P2 Directions
-        # Plane 4: Player Turn (All 1 if P1, All -1 if P2)
         state = np.zeros((5, 5, 5), dtype=np.float32)
         
-        for r in range(5):
-            if 1 <= self.p1_pos[r] <= 5:
-                state[0, r, self.p1_pos[r] - 1] = 1.0
+        if self.turn == 1:
+            # Player 1's perspective
+            for r in range(5):
+                if 1 <= self.p1_pos[r] <= 5: state[0, r, self.p1_pos[r] - 1] = 1.0
+                if self.p1_fin[r] == 1: state[2, r, :] = 0.0
+                else: state[2, r, :] = self.p1_dir[r]
+
+            for c in range(5):
+                if 1 <= self.p2_pos[c] <= 5: state[1, self.p2_pos[c] - 1, c] = 1.0
+                if self.p2_fin[c] == 1: state[3, :, c] = 0.0
+                else: state[3, :, c] = self.p2_dir[c]
+
+            state[4, :, :] = 1.0 # Indicator for P1 speed profile
             
-            if self.p1_fin[r] == 1:
-                state[2, r, :] = 0.0  # Unique marker for finished pieces
-            else:
-                state[2, r, :] = self.p1_dir[r]
+        else:
+            # Player 2's perspective (Board is transposed)
+            for r in range(5):
+                # P2's pieces are now treated as moving horizontally (rows)
+                if 1 <= self.p2_pos[r] <= 5: state[0, r, self.p2_pos[r] - 1] = 1.0
+                if self.p2_fin[r] == 1: state[2, r, :] = 0.0
+                else: state[2, r, :] = self.p2_dir[r]
 
-        for c in range(5):
-            if 1 <= self.p2_pos[c] <= 5:
-                state[1, self.p2_pos[c] - 1, c] = 1.0
-                
-            if self.p2_fin[c] == 1:
-                state[3, :, c] = 0.0  # Unique marker for finished pieces
-            else:
-                state[3, :, c] = self.p2_dir[c]
+            for c in range(5):
+                # P1's pieces are now treated as moving vertically (columns)
+                if 1 <= self.p1_pos[c] <= 5: state[1, self.p1_pos[c] - 1, c] = 1.0
+                if self.p1_fin[c] == 1: state[3, :, c] = 0.0
+                else: state[3, :, c] = self.p1_dir[c]
 
-        # Turn Plane
-        turn_val = 1.0 if self.turn == 1 else -1.0
-        state[4, :, :] = turn_val
+            state[4, :, :] = -1.0 # Indicator for P2 speed profile
 
         return state
 
@@ -93,28 +94,20 @@ class SquadroBoard:
             b_idx = nxt - 1
             if 0 <= b_idx <= 4 and opp_pos[b_idx] == (my_track + 1):
                 # CHAIN JUMP LOGIC
-                # Keep jumping as long as the landing spot is occupied by another opponent piece
                 land = nxt
                 while 0 <= (land - 1) <= 4 and opp_pos[land - 1] == (my_track + 1):
                     opp_idx = land - 1
-                    
                     # Reset the jumped opponent piece to its respective start/turnaround
                     opp_pos[opp_idx] = 0 if opp_dir[opp_idx] == 1 else 6
-                    
-                    # Advance the landing position by our direction
                     land += d
                 
-                # Ensure the final landing spot doesn't go out of bounds
                 if land > 6: land = 6
                 if land < 0: land = 0
                 
                 my_pos[piece_idx] = land
-                
-                # In Squadro, a jump immediately ends the movement for that piece
                 break 
                 
             else:
-                # Normal move (no collision)
                 curr = nxt
                 my_pos[piece_idx] = curr
             
