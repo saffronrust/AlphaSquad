@@ -49,6 +49,7 @@ class AlphaZeroTrainer:
         Stage 1: Self-Play
         Plays one game of AI vs AI and returns the training examples.
         """
+        self.nnet.eval()
         train_examples = []
         board = SquadroBoard()
         step_count = 0
@@ -77,7 +78,6 @@ class AlphaZeroTrainer:
                 for hist_state, hist_pi, hist_player in train_examples:
                     # If the winner is the player who moved in that state: +1
                     # Else: -1
-                    # "Winner (+1 if this player won, -1 if other)"
                     reward = 1 if hist_player == board.winner else -1
                     return_data.append((hist_state, hist_pi, reward))
                 return return_data
@@ -85,37 +85,46 @@ class AlphaZeroTrainer:
     def learn(self):
         """
         Stage 2: Retrain Network
-        Samples a mini-batch and updates weights.
+        Samples mini-batches and updates weights over multiple epochs.
         """
+        self.nnet.train()
+        if len(self.train_examples_history) < BATCH_SIZE: 
+            return 0
+            
+        avg_loss = 0
+        # Calculate how many batches make up a full sweep of your data
+        batches_per_epoch = len(self.train_examples_history) // BATCH_SIZE
+        
         for _ in range(EPOCHS):
-            # Sample batch
-            if len(self.train_examples_history) < BATCH_SIZE: continue
-            
-            batch = random.sample(self.train_examples_history, BATCH_SIZE)
-            
-            # Unpack
-            boards, pis, vs = list(zip(*batch))
-            boards = torch.FloatTensor(np.array(boards)).to(DEVICE)
-            target_pis = torch.FloatTensor(np.array(pis)).to(DEVICE)
-            target_vs = torch.FloatTensor(np.array(vs)).to(DEVICE)
-            
-            # Predict
-            out_pi, out_v = self.nnet(boards)
-            
-            # Loss Calculation
-            # Value: Mean Squared Error
-            loss_v = F.mse_loss(out_v.view(-1), target_vs)
-            # Policy: Cross Entropy (Negative Log Likelihood)
-            loss_pi = -torch.sum(target_pis * out_pi) / target_pis.size(0)
-            
-            total_loss = loss_v + loss_pi
-            
-            self.optimizer.zero_grad()
-            total_loss.backward()
-            self.optimizer.step()
-            
-            return total_loss.item()
-        return 0
+            for _ in range(batches_per_epoch):
+                # Sample batch
+                batch = random.sample(self.train_examples_history, BATCH_SIZE)
+                
+                # Unpack
+                boards, pis, vs = list(zip(*batch))
+                boards = torch.FloatTensor(np.array(boards)).to(DEVICE)
+                target_pis = torch.FloatTensor(np.array(pis)).to(DEVICE)
+                target_vs = torch.FloatTensor(np.array(vs)).to(DEVICE)
+                
+                # Predict
+                out_pi, out_v = self.nnet(boards)
+                
+                # Loss Calculation
+                # Value: Mean Squared Error
+                loss_v = F.mse_loss(out_v.view(-1), target_vs)
+                # Policy: Cross Entropy (Negative Log Likelihood)
+                loss_pi = -torch.sum(target_pis * out_pi) / target_pis.size(0)
+                
+                total_loss = loss_v + loss_pi
+                
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                self.optimizer.step()
+                
+                avg_loss += total_loss.item()
+                
+        # Return the average loss across all processed batches
+        return avg_loss / (EPOCHS * batches_per_epoch)
 
     def evaluate(self):
         """
@@ -123,6 +132,7 @@ class AlphaZeroTrainer:
         Play New Model (nnet) vs Old Model (pnet).
         Returns fraction of games won by New Model.
         """
+        self.nnet.eval()
         nnet_mcts = NeuralMCTS(self.nnet, DEVICE)
         pnet_mcts = NeuralMCTS(self.pnet, DEVICE)
         

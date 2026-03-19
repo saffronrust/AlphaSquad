@@ -62,8 +62,8 @@ class NeuralMCTS:
 
             value = 0.0
             if node.state.winner:
-                if node.state.winner == 1: value = 1.0
-                else: value = -1.0
+                # The game is over. The person whose turn it currently is has already lost.
+                value = -1.0
             else:
                 state_vec = node.state.get_state_vector()
                 state_tensor = torch.FloatTensor(state_vec).to(self.device).unsqueeze(0)
@@ -83,9 +83,15 @@ class NeuralMCTS:
                         node.children[m] = MCTSNode(new_state, parent=node, move=m, prob=l_probs[i])
             
             # Backprop
+            leaf_player = node.state.turn
+
             while node is not None:
                 node.visits += 1
-                node.value_sum += value 
+                # If this node's turn matches the leaf's turn, add the value. Else, subtract it.
+                if node.state.turn == leaf_player:
+                    node.value_sum += value
+                else:
+                    node.value_sum -= value
                 node = node.parent
 
         # 3. Calculate Policy Vector (pi) from visits
@@ -113,7 +119,6 @@ class NeuralMCTS:
 
         for move, child in node.children.items():
             q_val = child.q_value()
-            if node.state.turn == 2: q_val = -q_val 
             u_val = self.c_puct * child.prob * (sqrt_N / (1 + child.visits))
             score = q_val + u_val
             if score > best_score:

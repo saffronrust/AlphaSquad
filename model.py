@@ -40,14 +40,14 @@ class ResidualBlock(nn.Module):
         return F.relu(out)
 
 class SquadroNet(nn.Module):
-    def __init__(self, num_res_blocks=5, in_channels=5):
+    def __init__(self, num_res_blocks=10, in_channels=5):
         super(SquadroNet, self).__init__()
         
         # --- BODY ---
         # 1. Initial Convolutional Block
         self.conv_block = ConvBlock(in_channels, 256)
         
-        # 2. 19 Residual Blocks
+        # 2. 10 Residual Blocks
         self.res_blocks = nn.ModuleList([
             ResidualBlock(256) for _ in range(num_res_blocks)
         ])

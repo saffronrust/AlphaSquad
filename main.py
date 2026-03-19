@@ -17,7 +17,7 @@ def load_ai():
     model = SquadroNet().to(DEVICE)
     if os.path.exists(MODEL_PATH):
         try:
-            model.load_state_dict(torch.load(MODEL_PATH))
+            model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
             print("AI Brain Loaded.")
         except:
             print("Error loading model. Starting with random weights.")
