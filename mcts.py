@@ -29,13 +29,8 @@ class NeuralMCTS:
         self.beta = beta     
 
     def get_action_prob(self, root_state, simulations=400, temp=1.0, add_noise=True):
-        """
-        Runs MCTS and returns the policy vector (pi).
-        :param temp: Temperature (1.0 = explore, ~0 = competitive/greedy)
-        """
         root = MCTSNode(root_state.clone())
         
-        # 1. Prediction & Noise
         with torch.no_grad():
             state_tensor = torch.FloatTensor(root_state.get_state_vector()).to(self.device).unsqueeze(0)
             pi, v = self.model(state_tensor)
@@ -46,7 +41,6 @@ class NeuralMCTS:
         if legal_probs.sum() > 0: legal_probs /= legal_probs.sum()
         else: legal_probs = np.ones(len(legal_moves)) / len(legal_moves)
         
-        # Add Dirichlet Noise to root (Exploration)
         if add_noise:
             noise = np.random.dirichlet([self.alpha] * len(legal_moves))
             legal_probs = (1 - self.beta) * legal_probs + self.beta * noise
@@ -55,7 +49,6 @@ class NeuralMCTS:
             root.children[move] = MCTSNode(root.state.clone(), parent=root, move=move, prob=legal_probs[i])
             root.children[move].state.do_move(move)
 
-        # 2. Simulations
         for _ in range(simulations):
             node = root
             while not node.is_leaf() and node.state.winner is None:
@@ -63,7 +56,6 @@ class NeuralMCTS:
 
             value = 0.0
             if node.state.winner:
-                # The game is over. The person whose turn it currently is has already lost.
                 value = -1.0
             else:
                 state_vec = node.state.get_state_vector()
@@ -83,7 +75,6 @@ class NeuralMCTS:
                         new_state.do_move(m)
                         node.children[m] = MCTSNode(new_state, parent=node, move=m, prob=l_probs[i])
             
-            # Backprop
             leaf_player = node.state.turn
 
             while node is not None:
@@ -94,13 +85,11 @@ class NeuralMCTS:
                     node.value_sum -= value
                 node = node.parent
 
-        # 3. Calculate Policy Vector (pi) from visits
         counts = [0] * 5 
         for move, child in root.children.items():
             counts[move] = child.visits
 
         if temp == 0:
-            # FIX: Random tie-breaker for identical visit counts to prevent deterministic looping
             max_count = max(counts)
             best_moves = [i for i, count in enumerate(counts) if count == max_count]
             best = np.random.choice(best_moves)
@@ -133,37 +122,53 @@ class NeuralMCTS:
         probs = self.get_action_prob(root_state, simulations, temp=0, add_noise=add_noise)
         return np.argmax(probs)
     
-    def get_action_prob_batched(self, board_list, simulations=200, temps=None, add_noise=True):
-        """
-        Runs MCTS for multiple games simultaneously.
-        :param board_list: A list of active SquadroBoard instances.
-        :param temps: A list of temperatures corresponding to each board.
-        """
+    # FIX 2: Added `roots` parameter to allow retention of the search tree
+    def get_action_prob_batched(self, board_list, roots=None, simulations=200, temps=None, add_noise=True):
         num_games = len(board_list)
         if temps is None: temps = [1.0] * num_games
-        roots = [MCTSNode(b.clone()) for b in board_list]
+        
+        # Initialize roots if they weren't passed in, or fill in any missing ones
+        if roots is None:
+            roots = [MCTSNode(b.clone()) for b in board_list]
+        else:
+            for i in range(num_games):
+                if roots[i] is None:
+                    roots[i] = MCTSNode(board_list[i].clone())
 
-        # 1. Prediction & Noise for all roots simultaneously
-        states_to_eval = [r.state.get_state_vector() for r in roots]
-        states_tensor = torch.FloatTensor(np.array(states_to_eval)).to(self.device)
-        with torch.no_grad():
-            pi_batch, _ = self.model(states_tensor)
-            probs_batch = torch.exp(pi_batch).cpu().numpy()
-
+        # 1. Prediction for completely new root nodes
+        states_to_eval = []
+        eval_indices = []
         for i, root in enumerate(roots):
-            legal_moves = root.untried_moves
-            legal_probs = np.array([probs_batch[i][m] for m in legal_moves])
-            if legal_probs.sum() > 0: legal_probs /= legal_probs.sum()
-            else: legal_probs = np.ones(len(legal_moves)) / len(legal_moves)
+            if len(root.children) == 0: # Only evaluate if it hasn't been expanded yet
+                states_to_eval.append(root.state.get_state_vector())
+                eval_indices.append(i)
 
-            # Add Dirichlet Noise to root (Exploration)
-            if add_noise:
-                noise = np.random.dirichlet([self.alpha] * len(legal_moves))
-                legal_probs = (1 - self.beta) * legal_probs + self.beta * noise
+        if len(states_to_eval) > 0:
+            states_tensor = torch.FloatTensor(np.array(states_to_eval)).to(self.device)
+            with torch.no_grad():
+                pi_batch, _ = self.model(states_tensor)
+                probs_batch = torch.exp(pi_batch).cpu().numpy()
 
-            for j, move in enumerate(legal_moves):
-                root.children[move] = MCTSNode(root.state.clone(), parent=root, move=move, prob=legal_probs[j])
-                root.children[move].state.do_move(move)
+            for idx, eval_idx in enumerate(eval_indices):
+                root = roots[eval_idx]
+                legal_moves = root.untried_moves
+                legal_probs = np.array([probs_batch[idx][m] for m in legal_moves])
+                if legal_probs.sum() > 0: legal_probs /= legal_probs.sum()
+                else: legal_probs = np.ones(len(legal_moves)) / len(legal_moves)
+
+                for j, move in enumerate(legal_moves):
+                    root.children[move] = MCTSNode(root.state.clone(), parent=root, move=move, prob=legal_probs[j])
+                    root.children[move].state.do_move(move)
+
+        # Apply Dirichlet Noise to encourage exploration (only done at the root)
+        if add_noise:
+            for root in roots:
+                legal_moves = list(root.children.keys())
+                if legal_moves:
+                    noise = np.random.dirichlet([self.alpha] * len(legal_moves))
+                    for j, move in enumerate(legal_moves):
+                        # Temporarily blend existing prob with noise for this search iteration
+                        root.children[move].prob = (1 - self.beta) * root.children[move].prob + self.beta * noise[j]
 
         # 2. Simulations
         for _ in range(simulations):
@@ -171,7 +176,6 @@ class NeuralMCTS:
             states_to_eval = []
             eval_indices = []
 
-            # A. Traverse all trees to find leaf nodes
             for i, root in enumerate(roots):
                 node = root
                 while not node.is_leaf() and node.state.winner is None:
@@ -182,7 +186,6 @@ class NeuralMCTS:
                     states_to_eval.append(node.state.get_state_vector())
                     eval_indices.append(i)
 
-            # B. Evaluate all newly discovered leaf nodes in one massive batch
             values = np.zeros(num_games)
             if len(states_to_eval) > 0:
                 states_tensor = torch.FloatTensor(np.array(states_to_eval)).to(self.device)
@@ -191,7 +194,6 @@ class NeuralMCTS:
                     pi_batch = torch.exp(pi_batch).cpu().numpy()
                     v_batch = v_batch.cpu().numpy()
 
-                # C. Expand the trees with the neural net's predictions
                 for idx, eval_idx in enumerate(eval_indices):
                     node = leaf_nodes[eval_idx]
                     values[eval_idx] = v_batch[idx][0]
@@ -207,7 +209,6 @@ class NeuralMCTS:
                             new_state.do_move(m)
                             node.children[m] = MCTSNode(new_state, parent=node, move=m, prob=l_probs[j])
 
-            # D. Backpropagate the values up the trees
             for i, node in enumerate(leaf_nodes):
                 val = -1.0 if node.state.winner else values[i]
                 leaf_player = node.state.turn
@@ -240,4 +241,5 @@ class NeuralMCTS:
                 c_sum = float(sum(counts))
                 batch_probs.append([x / c_sum for x in counts])
 
-        return batch_probs
+        # FIX 2: Return the roots alongside the probabilities so train.py can step them forward
+        return batch_probs, roots
