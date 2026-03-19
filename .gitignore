@@ -3,3 +3,4 @@ squadro_net.pth
 __pycache__
 runs
 squadro_best.pth
+squadro_buffer.pkl

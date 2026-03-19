@@ -5,6 +5,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 import random
+import pickle
 from collections import deque
 from torch.utils.tensorboard import SummaryWriter
 
@@ -14,13 +15,21 @@ from mcts import NeuralMCTS
 
 # --- HYPERPARAMETERS ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-ITERATIONS = 10           
-SELF_PLAY_EPISODES = 50   
-EPOCHS = 10               
-BATCH_SIZE = 256           
+ITERATIONS = 50           
+SELF_PLAY_EPISODES = 100  
+EPOCHS = 5                
+BATCH_SIZE = 256          
 EVAL_GAMES = 40           
 WIN_THRESHOLD = 0.55      
+
+# --- FILE PATHS ---
 MODEL_PATH = "squadro_best.pth"
+BUFFER_PATH = "squadro_buffer.pkl"
+CHECKPOINT_DIR = "checkpoints/"
+
+# Create checkpoints directory if it doesn't exist
+if not os.path.exists(CHECKPOINT_DIR):
+    os.makedirs(CHECKPOINT_DIR)
 
 class AlphaZeroTrainer:
     def __init__(self):
@@ -38,29 +47,67 @@ class AlphaZeroTrainer:
         self.mcts = NeuralMCTS(self.nnet, DEVICE)
         self.train_examples_history = deque(maxlen=10000) 
 
-    def execute_episode(self):
+        # Load existing buffer if resuming a paused run
+        if os.path.exists(BUFFER_PATH):
+            print(f"Loading existing training buffer from {BUFFER_PATH}...")
+            with open(BUFFER_PATH, "rb") as f:
+                self.train_examples_history = pickle.load(f)
+            print(f"Loaded {len(self.train_examples_history)} examples.")
+            
+        # # To load a specific checkpoint:
+        # checkpoint = torch.load("checkpoints/checkpoint_iter_10.pth")
+        # self.nnet.load_state_dict(checkpoint['model_state_dict'])
+        # self.pnet.load_state_dict(checkpoint['model_state_dict'])
+        # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    def execute_parallel_episodes(self, target_episodes=100, concurrent_games=64):
         self.nnet.eval()
         train_examples = []
-        board = SquadroBoard()
-        step_count = 0
         
-        while True:
-            step_count += 1
-            temp = 1.0 if step_count < 15 else 0.0
-            pi = self.mcts.get_action_prob(board, simulations=200, temp=temp, add_noise=True)
+        # Initialize an array of active games
+        active_boards = [SquadroBoard() for _ in range(concurrent_games)]
+        histories = [[] for _ in range(concurrent_games)]
+        step_counts = [0] * concurrent_games
+        episodes_completed = 0
+        
+        # print(f"  Running {concurrent_games} games simultaneously...")
+        
+        while episodes_completed < target_episodes:
+            # Generate temperatures for all games based on their individual turn counts
+            temps = [1.0 if s < 15 else 0.0 for s in step_counts]
             
-            sym = board.get_state_vector()
-            train_examples.append([sym, pi, board.turn])
+            # Fetch moves for all games at once
+            batch_pi = self.mcts.get_action_prob_batched(active_boards, simulations=200, temps=temps, add_noise=True)
             
-            action = np.random.choice(len(pi), p=pi)
-            board.do_move(action)
-            
-            if board.winner is not None:
-                return_data = []
-                for hist_state, hist_pi, hist_player in train_examples:
-                    reward = 1 if hist_player == board.winner else -1
-                    return_data.append((hist_state, hist_pi, reward))
-                return return_data
+            for i in range(concurrent_games):
+                board = active_boards[i]
+                pi = batch_pi[i]
+                sym = board.get_state_vector()
+                
+                # Store history
+                histories[i].append([sym, pi, board.turn])
+                
+                # Execute the chosen move
+                action = np.random.choice(len(pi), p=pi)
+                board.do_move(action)
+                step_counts[i] += 1
+                
+                # If a game finishes, record its data and start a new one in its slot
+                if board.winner is not None:
+                    for hist_state, hist_pi, hist_player in histories[i]:
+                        reward = 1 if hist_player == board.winner else -1
+                        train_examples.append((hist_state, hist_pi, reward))
+                    
+                    episodes_completed += 1
+                    if episodes_completed % 10 == 0:
+                        print(f"    Finished {episodes_completed}/{target_episodes} games...")
+                    
+                    # Reset this slot with a fresh game
+                    active_boards[i] = SquadroBoard()
+                    histories[i] = []
+                    step_counts[i] = 0
+                    
+        return train_examples
 
     def learn(self):
         self.nnet.train()
@@ -69,7 +116,6 @@ class AlphaZeroTrainer:
             
         avg_loss = 0
         
-        # FIX: Cap the maximum number of batches per epoch to prevent runaway loops
         batches_per_epoch = min(len(self.train_examples_history) // BATCH_SIZE, 100) 
         if batches_per_epoch == 0:
             batches_per_epoch = 1
@@ -113,9 +159,9 @@ class AlphaZeroTrainer:
             
             while board.winner is None:
                 if (board.turn == 1 and p1_is_nnet) or (board.turn == 2 and not p1_is_nnet):
-                    move = nnet_mcts.search(board, simulations=40, add_noise=False)
+                    move = nnet_mcts.search(board, simulations=200, add_noise=False)
                 else:
-                    move = pnet_mcts.search(board, simulations=40, add_noise=False)
+                    move = pnet_mcts.search(board, simulations=200, add_noise=False)
                 board.do_move(move)
             
             if p1_is_nnet:
@@ -133,12 +179,14 @@ class AlphaZeroTrainer:
             print(f"\n--- Iteration {i}/{ITERATIONS} ---")
             
             print("Step 1: Self-Play (Gathering Data)...")
-            new_examples = []
-            for _ in range(SELF_PLAY_EPISODES):
-                new_examples += self.execute_episode()
-            
+            new_examples = self.execute_parallel_episodes(target_episodes=SELF_PLAY_EPISODES, concurrent_games=64)
             self.train_examples_history.extend(new_examples)
             print(f"  Buffer size: {len(self.train_examples_history)} examples")
+
+            # Save the experience buffer to disk
+            with open(BUFFER_PATH, "wb") as f:
+                pickle.dump(self.train_examples_history, f)
+            print("  Training buffer saved to disk.")
 
             print("Step 2: Retraining Neural Network...")
             loss = self.learn()
@@ -157,8 +205,17 @@ class AlphaZeroTrainer:
             else:
                 print("  REJECTED. Reverting to previous best.")
                 self.nnet.load_state_dict(self.pnet.state_dict())
-                # FIX: Reset the optimizer to clear bad momentum from the rejected model's gradient steps
                 self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
+
+            # --- Checkpoint Saving ---
+            if i % 5 == 0:
+                checkpoint_file = os.path.join(CHECKPOINT_DIR, f"checkpoint_iter_{i}.pth")
+                print(f"  Saving historical checkpoint to {checkpoint_file}...")
+                torch.save({
+                    'iteration': i,
+                    'model_state_dict': self.nnet.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                }, checkpoint_file)
 
 if __name__ == "__main__":
     trainer = AlphaZeroTrainer()
