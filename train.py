@@ -24,7 +24,7 @@ WIN_THRESHOLD = 0.55
 
 # --- FILE PATHS ---
 MODEL_PATH = "squadro_best.pth"
-OPTIMIZER_PATH = "squadro_optimizer.pth" # FIX 1: Save the optimizer state
+OPTIMIZER_PATH = "squadro_optimizer.pth" 
 BUFFER_PATH = "squadro_buffer.pkl"
 CHECKPOINT_DIR = "checkpoints/"
 
@@ -49,7 +49,7 @@ class AlphaZeroTrainer:
         
         self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
         
-        # FIX 1: Load the optimizer state to retain Adam's momentum
+        # Load the optimizer state to retain Adam's momentum
         if os.path.exists(OPTIMIZER_PATH):
             print("Loading existing optimizer state...")
             self.optimizer.load_state_dict(torch.load(OPTIMIZER_PATH, map_location=DEVICE))
@@ -70,7 +70,7 @@ class AlphaZeroTrainer:
         train_examples = []
         
         active_boards = [SquadroBoard() for _ in range(concurrent_games)]
-        active_roots = [None] * concurrent_games # FIX 2: Track MCTS roots to avoid discarding the tree
+        active_roots = [None] * concurrent_games 
         histories = [[] for _ in range(concurrent_games)]
         step_counts = [0] * concurrent_games
         episodes_completed = 0
@@ -83,9 +83,8 @@ class AlphaZeroTrainer:
         while active_slots:
             current_boards = [active_boards[i] for i in active_slots]
             current_temps = [1.0 if step_counts[i] < 15 else 0.0 for i in active_slots]
-            current_roots = [active_roots[i] for i in active_slots] # Pass current roots to MCTS
+            current_roots = [active_roots[i] for i in active_slots] 
             
-            # FIX 2: MCTS now returns the updated root nodes
             batch_pi, updated_roots = self.mcts.get_action_prob_batched(
                 current_boards, roots=current_roots, simulations=200, temps=current_temps, add_noise=True
             )
@@ -106,7 +105,7 @@ class AlphaZeroTrainer:
                 board.do_move(action)
                 step_counts[slot] += 1
                 
-                # FIX 2: Step the root forward to the chosen child to retain the search tree
+                # Step the root forward to the chosen child to retain the search tree
                 if action in root.children:
                     active_roots[slot] = root.children[action]
                     active_roots[slot].parent = None # Detach parent to free memory
@@ -149,9 +148,12 @@ class AlphaZeroTrainer:
         batches_per_epoch = min(len(self.train_examples_history) // BATCH_SIZE, 100) 
         if batches_per_epoch == 0: batches_per_epoch = 1
         
+        # FIX 1: Cast deque to list for O(1) random sampling speed
+        sampling_pool = list(self.train_examples_history)
+        
         for _ in range(EPOCHS):
             for _ in range(batches_per_epoch):
-                batch = random.sample(self.train_examples_history, BATCH_SIZE)
+                batch = random.sample(sampling_pool, BATCH_SIZE)
                 
                 boards, pis, vs = list(zip(*batch))
                 boards = torch.FloatTensor(np.array(boards)).to(DEVICE)
@@ -188,13 +190,40 @@ class AlphaZeroTrainer:
             p1_is_nnet = (i % 2 == 0) 
             moves_taken = 0
             
+            # FIX 2: Initialize root trackers for the evaluation games
+            nnet_root = None
+            pnet_root = None
+            
             while board.winner is None and moves_taken < MAX_MOVES:
+                # Use batched MCTS with a batch size of 1 to utilize the root-passing logic
                 if (board.turn == 1 and p1_is_nnet) or (board.turn == 2 and not p1_is_nnet):
-                    move = nnet_mcts.search(board, simulations=200, add_noise=False)
+                    probs, updated_roots = nnet_mcts.get_action_prob_batched(
+                        [board], roots=[nnet_root], simulations=200, temps=[0.0], add_noise=False
+                    )
+                    move = np.argmax(probs[0])
+                    nnet_root = updated_roots[0]
                 else:
-                    move = pnet_mcts.search(board, simulations=200, add_noise=False)
+                    probs, updated_roots = pnet_mcts.get_action_prob_batched(
+                        [board], roots=[pnet_root], simulations=200, temps=[0.0], add_noise=False
+                    )
+                    move = np.argmax(probs[0])
+                    pnet_root = updated_roots[0]
+                    
                 board.do_move(move)
                 moves_taken += 1
+                
+                # Step both MCTS trees forward to the chosen move to retain memory
+                if nnet_root and move in nnet_root.children:
+                    nnet_root = nnet_root.children[move]
+                    nnet_root.parent = None # Free memory
+                else:
+                    nnet_root = None
+                    
+                if pnet_root and move in pnet_root.children:
+                    pnet_root = pnet_root.children[move]
+                    pnet_root.parent = None # Free memory
+                else:
+                    pnet_root = None
             
             if board.winner is None: draws += 1
             elif p1_is_nnet:
@@ -238,7 +267,7 @@ class AlphaZeroTrainer:
             if win_rate >= WIN_THRESHOLD:
                 print("  NEW MODEL ACCEPTED! Saving...")
                 torch.save(self.nnet.state_dict(), MODEL_PATH)
-                torch.save(self.optimizer.state_dict(), OPTIMIZER_PATH) # FIX 1: Save optimizer state
+                torch.save(self.optimizer.state_dict(), OPTIMIZER_PATH)
                 self.pnet.load_state_dict(self.nnet.state_dict()) 
                 self.best_optimizer_state = self.optimizer.state_dict()
             else:
