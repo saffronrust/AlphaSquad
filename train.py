@@ -28,6 +28,7 @@ MODEL_PATH = "squadro_best.pth"
 OPTIMIZER_PATH = "squadro_optimizer.pth" 
 BUFFER_PATH = "squadro_buffer.pkl"
 CHECKPOINT_DIR = "checkpoints/"
+SPECIFIC_CHECKPOINT = "checkpoints/checkpoint_iter_10.pth"
 
 # Create checkpoints directory if it doesn't exist
 if not os.path.exists(CHECKPOINT_DIR):
@@ -65,6 +66,25 @@ class AlphaZeroTrainer:
             with open(BUFFER_PATH, "rb") as f:
                 self.train_examples_history = pickle.load(f)
             print(f"Loaded {len(self.train_examples_history)} examples.")
+        
+        if os.path.exists(SPECIFIC_CHECKPOINT):
+            print(f"Loading historical checkpoint from {SPECIFIC_CHECKPOINT}...")
+            checkpoint = torch.load(SPECIFIC_CHECKPOINT, map_location=DEVICE)
+            
+            # Extract and load the model weights
+            self.nnet.load_state_dict(checkpoint['model_state_dict'])
+            self.pnet.load_state_dict(checkpoint['model_state_dict'])
+            
+            # Re-initialize optimizer, then extract and load its state
+            self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.best_optimizer_state = copy.deepcopy(self.optimizer.state_dict())
+            
+            print(f"Successfully loaded checkpoint from Iteration {checkpoint['iteration']}")
+        else:
+            print("Checkpoint not found. Initializing new synchronized models...")
+            self.pnet.load_state_dict(self.nnet.state_dict())
+            self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
 
     def execute_parallel_episodes(self, target_episodes=100, concurrent_games=64):
         self.nnet.eval()
@@ -243,8 +263,13 @@ class AlphaZeroTrainer:
     def run_pipeline(self):
         print(f"Starting AlphaZero Pipeline on {DEVICE}")
         
-        for i in range(1, ITERATIONS + 1):
-            print(f"\n--- Iteration {i}/{ITERATIONS} ---")
+        if SPECIFIC_CHECKPOINT and os.path.exists(SPECIFIC_CHECKPOINT):
+            past_iterations = os.path.basename(SPECIFIC_CHECKPOINT)[-6:-4]
+            print(f"Resuming from checkpoint: {SPECIFIC_CHECKPOINT} (Iteration {past_iterations})")
+            
+        actual_iterations = ITERATIONS - int(past_iterations) if SPECIFIC_CHECKPOINT and os.path.exists(SPECIFIC_CHECKPOINT) else ITERATIONS
+        for i in range(1, actual_iterations + 1):
+            print(f"\n--- Iteration {i}/{actual_iterations} ---")
             
             print("Step 1: Self-Play (Gathering Data)...")
             new_examples = self.execute_parallel_episodes(target_episodes=SELF_PLAY_EPISODES, concurrent_games=64)
@@ -280,7 +305,7 @@ class AlphaZeroTrainer:
                 else:
                     self.optimizer = optim.Adam(self.nnet.parameters(), lr=0.001)
 
-            if i % 5 == 0:
+            if i % 2 == 0:
                 checkpoint_file = os.path.join(CHECKPOINT_DIR, f"checkpoint_iter_{i}.pth")
                 print(f"  Saving historical checkpoint to {checkpoint_file}...")
                 torch.save({
