@@ -264,12 +264,14 @@ class AlphaZeroTrainer:
         print(f"Starting AlphaZero Pipeline on {DEVICE}")
         
         if SPECIFIC_CHECKPOINT and os.path.exists(SPECIFIC_CHECKPOINT):
-            past_iterations = os.path.basename(SPECIFIC_CHECKPOINT)[-6:-4]
+            filename = os.path.basename(SPECIFIC_CHECKPOINT)
+            past_iterations = int(filename.split('_')[-1].split('.')[0])
             print(f"Resuming from checkpoint: {SPECIFIC_CHECKPOINT} (Iteration {past_iterations})")
+        else:
+            past_iterations = 0
             
-        actual_iterations = ITERATIONS - int(past_iterations) if SPECIFIC_CHECKPOINT and os.path.exists(SPECIFIC_CHECKPOINT) else ITERATIONS
-        for i in range(1, actual_iterations + 1):
-            print(f"\n--- Iteration {i}/{actual_iterations} ---")
+        for i in range(past_iterations + 1, ITERATIONS + 1):
+            print(f"\n--- Iteration {i}/{ITERATIONS} ---")
             
             print("Step 1: Self-Play (Gathering Data)...")
             new_examples = self.execute_parallel_episodes(target_episodes=SELF_PLAY_EPISODES, concurrent_games=64)
