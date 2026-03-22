@@ -30,7 +30,7 @@ BUFFER_PATH = "squadro_buffer.pkl"
 CHECKPOINT_DIR = "checkpoints/"
 
 # ! PLEASE CHOOSE THE LATEST CHECKPOINT
-# SPECIFIC_CHECKPOINT = "checkpoints/checkpoint_iter_50.pth"
+SPECIFIC_CHECKPOINT = "checkpoints/checkpoint_iter_50.pth"
 
 # Create checkpoints directory if it doesn't exist
 if not os.path.exists(CHECKPOINT_DIR):
