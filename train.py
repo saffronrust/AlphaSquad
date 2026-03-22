@@ -28,7 +28,9 @@ MODEL_PATH = "squadro_best.pth"
 OPTIMIZER_PATH = "squadro_optimizer.pth" 
 BUFFER_PATH = "squadro_buffer.pkl"
 CHECKPOINT_DIR = "checkpoints/"
-SPECIFIC_CHECKPOINT = "checkpoints/checkpoint_iter_10.pth"
+
+# ! PLEASE CHOOSE THE LATEST CHECKPOINT
+# SPECIFIC_CHECKPOINT = "checkpoints/checkpoint_iter_50.pth"
 
 # Create checkpoints directory if it doesn't exist
 if not os.path.exists(CHECKPOINT_DIR):

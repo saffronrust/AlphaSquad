@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import torch
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -182,10 +183,10 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 2. Check Win / AI Turn
             if not board.winner and board.turn == 2:
                 # AI Turn
-                # Small delay to feel like "thinking"
-                # Note: For a real bot, you might want to run this in a separate thread
-                # if the AI takes >3-5 seconds, but for Squadro it's fast.
-                best_move = ai_player.search(board, simulations=100) # Lower sims for speed
+                # Offload the heavy MCTS search to a separate thread so the bot remains responsive
+                loop = asyncio.get_running_loop()
+                best_move = await loop.run_in_executor(None, ai_player.search, board, 100)
+                
                 board.do_move(best_move)
                 
                 # Update UI again after AI move
@@ -210,5 +211,3 @@ if __name__ == '__main__':
 
     print("Bot is polling...")
     app.run_polling()
-    
-    
