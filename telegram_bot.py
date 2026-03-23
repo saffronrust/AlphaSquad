@@ -6,6 +6,7 @@ import torch
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
 from dotenv import load_dotenv
+from cachetools import TTLCache
 
 # Import your existing game modules
 from game import SquadroBoard
@@ -26,8 +27,10 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Global dictionary to store game states: {chat_id: board_instance}
-games = {}
+# Global dictionary replaced with TTLCache
+# maxsize: Max concurrent games stored in memory
+# ttl: Time-to-live in seconds (86400 seconds = 24 hours)
+games = TTLCache(maxsize=10000, ttl=86400)
 
 # Load AI once at startup
 print("Loading AI Model...")
@@ -44,7 +47,7 @@ ai_player = NeuralMCTS(model, DEVICE)
 def render_board_text(board):
     """
     Converts the board state into a text-based representation suitable for Telegram.
-    Uses emojis for pieces.
+    Uses directional emojis to accurately reflect piece movesets.
     """
     text = "*SQUADRO BOT*\n\n"
     
@@ -60,7 +63,7 @@ def render_board_text(board):
     text += "           "
     for i in range(5):
         if board.p2_pos[i] == 0:
-            sym = "✅" if board.p2_fin[i] else "🔴"
+            sym = "✅" if board.p2_fin[i] else "🔽"
             text += f"{sym}"
         else:
             text += "⬜"
@@ -75,7 +78,7 @@ def render_board_text(board):
         
         # P1 Home Dock
         if board.p1_pos[r] == 0:
-            sym = "✅" if board.p1_fin[r] else "🟡"
+            sym = "✅" if board.p1_fin[r] else "▶️"
             text += f"{sym}|"
         else:
             text += "⬜|"
@@ -83,28 +86,36 @@ def render_board_text(board):
         # Board Cells
         for c in range(5):
             cell = "⚫" # Empty dot
+            
+            # Show exact direction for P1
             if board.p1_pos[r] == c + 1:
-                cell = "🟡" if board.p1_dir[r] == 1 else "Vk" # Visual simplification
-                cell = "🟡"
+                cell = "▶️" if board.p1_dir[r] == 1 else "◀️"
+            
+            # Show exact direction for P2
             if board.p2_pos[c] == r + 1:
-                cell = "🔴"
+                cell = "🔽" if board.p2_dir[c] == 1 else "🔼"
+                
             text += f"{cell}"
         
         # P1 Turnaround
-        if board.p1_pos[r] == 6: text += "|🟡\n"
-        else: text += "|⬜\n"
+        if board.p1_pos[r] == 6: 
+            text += "|◀️\n"
+        else: 
+            text += "|⬜\n"
 
     # Bottom Docks (P2 Turnaround)
     text += "           "
     for i in range(5):
-        if board.p2_pos[i] == 6: text += "🔴 "
-        else: text += "⬜"
+        if board.p2_pos[i] == 6: 
+            text += "🔼 "
+        else: 
+            text += "⬜"
     
     text += "\n\n"
     if board.winner:
         text += f"*Player {board.winner} Wins!*"
     else:
-        turn_text = "🟡 Your Turn (P1)" if board.turn == 1 else "🔴 AI Thinking..."
+        turn_text = "▶️ Your Turn (P1)" if board.turn == 1 else "🔽 AI Thinking..."
         text += f"Status: {turn_text}"
         
     return text
@@ -162,6 +173,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Handle Move Logic
+    # If the game was dropped from the cache due to inactivity, initialize a new one
     if chat_id not in games:
         games[chat_id] = SquadroBoard()
     

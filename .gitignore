@@ -1,8 +1,6 @@
 .env
-squadro_net.pth
 __pycache__
 runs
 checkpoints
-squadro_best.pth
 squadro_buffer.pkl
 squadro_optimizer.pth
