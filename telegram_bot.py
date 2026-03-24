@@ -47,71 +47,93 @@ ai_player = NeuralMCTS(model, DEVICE)
 def render_board_text(board):
     """
     Converts the board state into a text-based representation suitable for Telegram.
-    Uses directional emojis to accurately reflect piece movesets.
+    Uses strict ASCII characters.
     """
-    text = "*SQUADRO BOT*\n\n"
+    text = "```text\n"
+    text += "Squadro Telegram Bot (MH4517 Demo)\n"
+    text += "===================================\n\n"
     
-    # Header (P2 Speeds)
-    text += "           "
+    # --- PLAYER 2 HEADER (Top Docks) ---
+    p2_speed_str = "        "
     for i, s in enumerate(board.P2_SPEEDS):
-        eff = s if board.p2_dir[i] == 1 else (4 - s)
+        eff_speed = s if board.p2_dir[i] == 1 else (4 - s)
         arrow = "v" if board.p2_dir[i] == 1 else "^"
-        text += f"{eff}{arrow} "
-    text += "\n"
+        p2_speed_str += f" {eff_speed}{arrow} "
+    text += p2_speed_str + "\n"
 
-    # Top Docks (P2 Home)
-    text += "           "
+    p2_home_str = "        "
     for i in range(5):
         if board.p2_pos[i] == 0:
-            sym = "✅" if board.p2_fin[i] else "🔽"
-            text += f"{sym}"
+            sym = "^" if board.p2_fin[i] else "v"
+            p2_home_str += f"[{sym}] "
         else:
-            text += "⬜"
-    text += "\n"
-
-    # Grid
-    for r in range(5):
-        # Left Header (P1 Speed)
-        eff = board.P1_SPEEDS[r] if board.p1_dir[r] == 1 else (4 - board.P1_SPEEDS[r])
-        arrow = ">" if board.p1_dir[r] == 1 else "<"
-        text += f"{eff}{arrow} "
-        
-        # P1 Home Dock
-        if board.p1_pos[r] == 0:
-            sym = "✅" if board.p1_fin[r] else "▶️"
-            text += f"{sym}|"
-        else:
-            text += "⬜|"
-
-        # Board Cells
-        for c in range(5):
-            cell = "⚫" # Empty dot
-            
-            # Show exact direction for P1
-            if board.p1_pos[r] == c + 1:
-                cell = "▶️" if board.p1_dir[r] == 1 else "◀️"
-            
-            # Show exact direction for P2
-            if board.p2_pos[c] == r + 1:
-                cell = "🔽" if board.p2_dir[c] == 1 else "🔼"
-                
-            text += f"{cell}"
-        
-        # P1 Turnaround
-        if board.p1_pos[r] == 6: 
-            text += "|◀️\n"
-        else: 
-            text += "|⬜\n"
-
-    # Bottom Docks (P2 Turnaround)
-    text += "           "
-    for i in range(5):
-        if board.p2_pos[i] == 6: 
-            text += "🔼 "
-        else: 
-            text += "⬜"
+            p2_home_str += "[ ] "
+    text += p2_home_str + "\n"
     
-    text += "\n\n"
+    # Replaced unicode box drawing with standard ASCII
+    text += "       " + "+---" * 5 + "+\n"
+
+    # --- MAIN GRID + PLAYER 1 (Rows) ---
+    for r in range(5):
+        eff_speed = board.P1_SPEEDS[r] if board.p1_dir[r] == 1 else (4 - board.P1_SPEEDS[r])
+        arrow = ">" if board.p1_dir[r] == 1 else "<"
+        row_str = f" {eff_speed}{arrow} "
+
+        if board.p1_pos[r] == 0:
+            sym = "<" if board.p1_fin[r] else ">"
+            row_str += f"[{sym}] "
+        else:
+            row_str += "[ ] "
+        
+        row_str += "|"
+
+        # The 5x5 Grid (Positions 1-5)
+        for c in range(5):
+            cell_symbol = " . "
+            
+            # Check P1 (Horizontal)
+            if board.p1_pos[r] == c + 1:
+                cell_symbol = " > " if board.p1_dir[r] == 1 else " < "
+            
+            # Check P2 (Vertical) - overwrites P1 visually if colliding
+            if board.p2_pos[c] == r + 1:
+                cell_symbol = " v " if board.p2_dir[c] == 1 else " ^ "
+
+            row_str += cell_symbol
+            if c < 4: row_str += " " # Spacing between cols
+
+        row_str += "|"
+
+        if board.p1_pos[r] == 6:
+            row_str += " [<]"
+        else:
+            row_str += " [ ]"
+
+        text += row_str + "\n"
+
+    # Replaced unicode box drawing with standard ASCII
+    text += "       " + "+---" * 5 + "+\n"
+
+    # --- PLAYER 2 FOOTER (Bottom Docks) ---
+    p2_end_str = "        "
+    for i in range(5):
+        if board.p2_pos[i] == 6:
+            p2_end_str += "[^] "
+        else:
+            p2_end_str += "[ ] "
+    text += p2_end_str + "\n"
+
+    # Status Display inside the block
+    text += "\n----------- Game Status -----------\n"
+    p1_score = sum(board.p1_fin)
+    p2_score = sum(board.p2_fin)
+    text += f"P1 (Horiz): {p1_score}/4  |  P2 (Vert): {p2_score}/4\n"
+    text += "-" * 35 + "\n"
+    
+    # End monospaced block
+    text += "```\n"
+    
+    # Append the turn status dynamically outside the code block
     if board.winner:
         text += f"*Player {board.winner} Wins!*"
     else:
